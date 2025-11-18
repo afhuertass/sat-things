@@ -13,13 +13,54 @@ def _():
     from netCDF4 import Dataset
     from matplotlib import gridspec
     import xarray as xr
-    return (xr,)
+    import folium
+    import json
+    import geopandas as gpd
+    import datetime
+    return datetime, folium, gpd, json, mo, xr
 
 
 @app.cell
 def _():
     import openeo as eo
     return (eo,)
+
+
+@app.cell
+def _(gpd, mo):
+    df = gpd.read_file("data/Colombia_departamentos_municipios_poblacion-topov2/MGN_ANM_DPTOS.geojson")
+
+    deps = ["CUNDINAMARCA" , "BOGOTÁ, D.C."]
+    cundi = df[ df["DPTO_CNMBR"].isin(deps) ]
+
+    cundi = cundi.to_geo_dict()
+
+    department = mo.ui.dropdown(options = df["DPTO_CNMBR"].unique() )
+    department
+    return department, df
+
+
+@app.cell
+def _(department, df):
+    department.value
+
+    selected_df = df[ df[ "DPTO_CNMBR"] == department.value ]
+    return (selected_df,)
+
+
+@app.cell
+def _(folium, json, selected_df):
+    def read_json(filename: str) -> dict:
+        with open(filename) as input:
+            field = json.load(input)
+        return field
+    aoi = selected_df.to_geo_dict()
+    #aoi = read_json("data/Colombia_departamentos_municipios_poblacion-topov2/MGN_ANM_DPTOS.geojson")
+    # 4.6458778276651955, -74.107015224911 
+    m = folium.Map([ 4.64, -74.10], zoom_start=7)
+    folium.GeoJson(aoi).add_to(m)
+    m
+    return (aoi,)
 
 
 @app.cell
@@ -62,10 +103,10 @@ def _():
           "north": -73.87,
       }
     #extend = {"west": 5.15, "south": 51.20, "east": 5.25, "north": 51.35}
-    temporal_extend = ["2025-01-01" , "2025-11-17"]
+    temporal_extend = ["2025-01-01" , "2025-01-30"]
     bands = ["B04", "B08", "B03" , "B11", "B12"]
     #5.2718, -73.4430
-    return bands, col_id, extend, temporal_extend
+    return bands, col_id, temporal_extend
 
 
 @app.cell
@@ -75,13 +116,12 @@ def _(bands):
 
 
 @app.cell
-def _(bands, col_id, connection, extend, temporal_extend):
+def _(aoi, bands, col_id, connection, temporal_extend):
 
     cube =connection.load_collection(collection_id=col_id, 
-                                     spatial_extent= extend , 
                                      temporal_extent=temporal_extend, 
                                      bands=bands
-                                    )
+                                    ).filter_spatial(aoi)
     return (cube,)
 
 
@@ -95,48 +135,43 @@ def _():
 
 
 @app.cell
-def _():
-    import rasterio
-    import matplotlib.pyplot as plt
-
-    img2 = rasterio.open("tibana.tiff").read()
-    plt.imshow(img2[0])
-    plt.colorbar()
-    plt.show()
-    return (plt,)
-
-
-@app.cell
 def _(compute_indices, cube):
-    max = cube.max_time()
+    #max = cube.reduce_dimension(reducer="mean", dimension="t")
     indices = compute_indices(
-        max,
+        cube,
         indices=["NBAI"]
-    )
-
+    ).reduce_dimension(reducer="mean", dimension="t")
     return (indices,)
 
 
 @app.cell
-def _(indices):
-    indices.download('tibana.tiff')
-    indices.download('tibana.nc')
+def _(datetime, department, indices):
+    ct = datetime.datetime.now()
+    ts = ct.timestamp()
+
+    filename = department.value + "_" + str(ts)
+    print(filename)
+    indices.download( filename +'.tiff')
+    indices.download( filename + '.nc')
+    return (filename,)
+
+
+@app.cell
+def _(filename):
+    filename
     return
 
 
 @app.cell
-def _():
-    return
+def _(filename, xr):
 
-
-@app.cell
-def _(xr):
-
-    ds_indices = xr.open_dataset("tibana.nc" )
+    ds_indices = xr.open_dataset( filename + ".nc" )
 
     data = ds_indices[["NBAI"]].to_array(dim="bands")
-    data
-    return (data,)
+    x_size = ds_indices["x"].shape[0]
+    y_size = ds_indices["y"].shape[0]
+
+    return data, x_size, y_size
 
 
 @app.cell
@@ -146,8 +181,8 @@ def _(data):
 
 
 @app.cell
-def _(nu_data):
-    nu_data_reshaped = nu_data.reshape((4599, 1044))
+def _(nu_data, x_size, y_size):
+    nu_data_reshaped = nu_data.reshape((y_size, x_size))
     return (nu_data_reshaped,)
 
 
@@ -155,32 +190,18 @@ def _(nu_data):
 def _(nu_data_reshaped):
     import numpy as np
 
-    nu2 = np.nan_to_num( nu_data_reshaped , nan=0.0)
+    nu2 = np.nan_to_num( nu_data_reshaped , nan=0)
     return (nu2,)
 
 
 @app.cell
-def _(nu2, plt):
+def _(nu2):
+    import matplotlib.pyplot as plt
 
-
-    plt.imshow( nu2, vmin=0, vmax = 0.1)
+    plt.imshow( nu2 )
     plt.colorbar()
+    plt.title("Normalized Urban Build up Index")
     plt.show()
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
-def _():
     return
 
 
